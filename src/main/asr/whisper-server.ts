@@ -82,18 +82,19 @@ export function watchdogLaunch(binary: string, args: string[]): { command: strin
 /** O servidor terminou antes de ficar pronto (o binário rodou; não é erro ao executá-lo). */
 class ServerExited extends Error {}
 
-/** Onde o whisper-server transcreve: placa de vídeo (backend do ggml, como Vulkan, e o nome da placa) ou só a CPU. */
+/** Onde o whisper-server transcreve: placa de vídeo (backend do ggml, como Vulkan ou CUDA, e o nome da placa) ou só a CPU. */
 export type AsrDevice = { gpu: boolean; backend?: string; name?: string; fellBackToCpu: boolean };
 
 /**
  * Lê o dispositivo do log de inicialização do whisper.cpp: `whisper_backend_init_gpu: using Vulkan0 backend` (ou `no GPU found`, ou
- * `failed to initialize … backend`, que também deixa na CPU) e o nome da placa em `ggml_vulkan: 0 = AMD Radeon RX 9060 XT (…)`.
+ * `failed to initialize … backend`, que também deixa na CPU) e o nome da placa em `ggml_vulkan: 0 = AMD Radeon RX 9060 XT (…)` ou, no
+ * CUDA, `Device 0: NVIDIA GeForce RTX 4070, …`.
  */
 export function deviceFromLog(log: string): Omit<AsrDevice, 'fellBackToCpu'> {
   const used = /whisper_backend_init_gpu: using ([A-Za-z]+?)(\d+) backend/.exec(log);
   if (!used || /whisper_backend_init_gpu: failed to initialize/.test(log)) return { gpu: false };
   const [, backend, index] = used;
-  const name = new RegExp(`ggml_vulkan: ${index} = (.+?)(?: \\(| \\|)`).exec(log)?.[1];
+  const name = new RegExp(`ggml_vulkan: ${index} = (.+?)(?: \\(| \\|)`).exec(log)?.[1] ?? new RegExp(`Device ${index}: ([^,\\r\\n]+)`).exec(log)?.[1];
   return { gpu: true, backend, ...(name ? { name: name.trim() } : {}) };
 }
 

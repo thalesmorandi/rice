@@ -136,6 +136,8 @@ powershell -ExecutionPolicy Bypass -File install.ps1 -Check   # confere Windows,
 powershell -ExecutionPolicy Bypass -File install.ps1           # compila os helpers e o instalador (dist\Rice-Setup-*.exe) e o abre
 ```
 
+Em placas NVIDIA o Vulkan já funciona. Para compilar também o backend CUDA (o runtime da NVIDIA soma algumas centenas de MB), instale o CUDA Toolkit 12 e rode `powershell -ExecutionPolicy Bypass -File scripts/build-whisper-win.ps1 -Cuda` antes do `install.ps1`.
+
 ## Primeiros passos
 
 Abra **Como usar o Rice** na barra lateral. É uma lista de passos que se atualiza ao vivo.

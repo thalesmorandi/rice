@@ -16,6 +16,10 @@ describe('dispositivo do whisper-server pelo log de inicialização', () => {
   test('Vulkan: o backend e o nome da placa, sem o driver', () => {
     expect(deviceFromLog(VULKAN)).toEqual({ gpu: true, backend: 'Vulkan', name: 'AMD Radeon RX 9060 XT' });
   });
+  test('CUDA: o nome vem da linha "Device N"', () => {
+    const log = 'ggml_cuda_init: found 1 CUDA devices:\r\n  Device 0: NVIDIA GeForce RTX 4070, compute capability 8.9, VMM: yes\r\nwhisper_backend_init_gpu: using CUDA0 backend\r\n';
+    expect(deviceFromLog(log)).toEqual({ gpu: true, backend: 'CUDA', name: 'NVIDIA GeForce RTX 4070' });
+  });
   test('backend escolhido que não inicializa: CPU', () => {
     const log = `${VULKAN}\r\nwhisper_backend_init_gpu: failed to initialize Vulkan0 backend\r\n`;
     expect(deviceFromLog(log)).toEqual({ gpu: false });

@@ -1,8 +1,9 @@
 name: whisper-win
 
-# Compila o whisper-server de Windows com Vulkan (scripts/build-whisper-win.ps1). Depois, num job à parte, sem o Vulkan SDK nem o MSVC
-# (como num PC comum sem placa de vídeo), confere que o build baixado transcreve: o backend Vulkan fica de fora e a CPU assume. O build
-# fica como artefato para quem quiser testar.
+# Compila o whisper-server de Windows com GPU (scripts/build-whisper-win.ps1) nas variantes Vulkan e Vulkan + CUDA. Depois, num job à
+# parte, sem o Vulkan SDK nem o MSVC (como num PC comum sem placa de vídeo), confere que o build baixado transcreve: os backends de GPU
+# ficam de fora e a CPU assume. O instalador leva a variante Vulkan; a CUDA (o runtime da NVIDIA soma centenas de MB) é opcional e só é
+# validada aqui. Os dois builds ficam como artefato para quem quiser testar.
 on:
   push:
     branches: [main]
@@ -16,34 +17,61 @@ permissions:
 
 jobs:
   build:
-    name: build (vulkan)
-    runs-on: windows-latest
-    timeout-minutes: 30
+    name: build (${{ matrix.variant }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: vulkan
+            args: ''
+            os: windows-latest
+            timeout: 30
+          # o nvcc do CUDA 12.9 só aceita o MSVC do Visual Studio 2022 (o whisper.cpp também fixa windows-2022 no build cublas);
+          # o backend CUDA compila kernels para várias gerações de GPU, daí o tempo maior
+          - variant: vulkan-cuda
+            args: '-Cuda'
+            os: windows-2022
+            timeout: 120
     steps:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
       - uses: ./.github/actions/vulkan-sdk
+      # CUDA 12.9: do Maxwell ao Blackwell (RTX 50) no mesmo pacote; o 13 deixa de fora as placas Maxwell, Pascal e Volta
+      - name: CUDA Toolkit
+        if: matrix.variant == 'vulkan-cuda'
+        uses: Jimver/cuda-toolkit@b8bf9c6c28f8a92fbb04dcfcaee872e60c57462d # v0.2.36
+        with:
+          cuda: '12.9.1'
+          method: network
+          sub-packages: '["nvcc", "cudart", "cublas", "cublas_dev", "thrust", "visual_studio_integration"]'
       - name: Compilar o whisper-server
-        run: powershell -ExecutionPolicy Bypass -File scripts/build-whisper-win.ps1
+        run: powershell -ExecutionPolicy Bypass -File scripts/build-whisper-win.ps1 ${{ matrix.args }}
       - uses: actions/upload-artifact@v4
         with:
-          name: whisper-server-win-x64-vulkan
+          name: whisper-server-win-x64-${{ matrix.variant }}
           path: resources/win/
           include-hidden-files: true  # o .version diz a versão, o commit e os backends do build
           if-no-files-found: error
           retention-days: 14
 
   sem-gpu:
-    name: transcreve sem GPU
+    name: transcreve sem GPU (${{ matrix.variant }})
     needs: build
+    if: ${{ !cancelled() }}  # a variante que compilou é testada mesmo se a outra falhar
     runs-on: windows-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [vulkan, vulkan-cuda]
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: whisper-server-win-x64-vulkan
+          name: whisper-server-win-x64-${{ matrix.variant }}
           path: whisper
       - name: Transcrever a amostra jfk.wav (modelo tiny), esperando a CPU
         shell: pwsh

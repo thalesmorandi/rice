@@ -96,7 +96,7 @@ describe('empacotamento do Windows (nsis x64)', () => {
     expect(ps.indexOf('SHA256]::Create')).toBeLessThan(ps.indexOf('ExtractToDirectory'));
     expect(ps).toContain('SHA-256 diferente');
   });
-  test('whisper-server com Vulkan: whisper.cpp no commit fixado, CPU oficial como reserva fora do CI', () => {
+  test('whisper-server com GPU: whisper.cpp no commit fixado, Vulkan sempre, CUDA só com -Cuda, CPU oficial como reserva fora do CI', () => {
     const ps = readFileSync('scripts/build-whisper-win.ps1', 'utf8');
     expect(readFileSync('scripts/build-whisper-win.ps1').subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf])); // BOM: o PowerShell 5.1 lê sem BOM como ANSI
     expect(ps).toMatch(/\$Commit = '[0-9a-f]{40}'/);
@@ -104,11 +104,14 @@ describe('empacotamento do Windows (nsis x64)', () => {
     expect(ps.indexOf('commit diferente')).toBeLessThan(ps.indexOf('cmake -S')); // confere o commit antes de compilar
     for (const flag of ['-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DGGML_NATIVE=OFF', '-DGGML_VULKAN=ON']) expect(ps, flag).toContain(flag);
     expect(ps).toContain("'ggml-vulkan.dll'"); // o pacote sempre leva o backend Vulkan (Copy-Item falha se faltar)
-    expect(ps).toMatch(/if \(\$env:CI\) \{ throw/); // no CI não cai para a CPU em silêncio
+    expect(ps).toContain('param([switch]$Cuda)');
+    expect(ps).toMatch(/if \(\$env:CI -or \$Cuda\) \{ throw/); // no CI não cai para a CPU em silêncio
     expect(ps.indexOf("& (Join-Path $PSScriptRoot 'fetch-whisper-win.ps1')")).toBeGreaterThan(ps.indexOf('if (-not $env:VULKAN_SDK)'));
     const fetch = readFileSync('scripts/fetch-whisper-win.ps1', 'utf8');
     const version = (text: string) => text.match(/\$Version = '([^']+)'/)?.[1];
     expect(version(ps)).toBe(version(fetch)); // GPU e reserva na mesma versão do whisper.cpp
+    // o instalador padrão nunca leva o CUDA (o runtime da NVIDIA tem centenas de MB)
+    for (const text of [pkg.scripts['dist:win'], readFileSync('.github/workflows/ci.yml', 'utf8'), readFileSync('.github/workflows/release-windows.yml', 'utf8')]) expect(text).not.toContain('-Cuda');
   });
   test('install.ps1: confere Windows x64 22H2, Node 22, CMake e C++; -Check não instala; erros em pt e en', () => {
     const ps = readFileSync('install.ps1', 'utf8');
@@ -143,9 +146,11 @@ describe('CI', () => {
       expect(wf.indexOf('uses: ./.github/actions/vulkan-sdk')).toBeLessThan(wf.indexOf('npm run dist:win'));
     }
   });
-  test('whisper-win: compila com Vulkan e transcreve sem GPU num job sem SDK', () => {
+  test('whisper-win: compila Vulkan e Vulkan + CUDA (action do CUDA fixada por commit) e transcreve sem GPU num job sem SDK', () => {
     const wf = readFileSync('.github/workflows/whisper-win.yml', 'utf8');
     expect(wf).toContain('scripts/build-whisper-win.ps1');
+    expect(wf).toContain("args: '-Cuda'");
+    expect(wf).toMatch(/Jimver\/cuda-toolkit@[0-9a-f]{40}/);
     for (const k of ['MODEL_SHA256', 'WAV_SHA256']) expect(wf).toMatch(new RegExp(`${k}: [0-9a-f]{64}`));
     const smoke = wf.slice(wf.indexOf('sem-gpu:'));
     expect(smoke).not.toContain('vulkan-sdk'); // o teste sem GPU roda sem o SDK nem o MSVC, como num PC comum
