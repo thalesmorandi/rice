@@ -17,6 +17,13 @@ export type WhisperServerOptions = {
   modelPath: string;
   language?: string;
   threads?: number;
+  /** `false` sobe o servidor com `-ng` (só CPU). Padrão: a GPU, quando o build tem uma (Metal no Mac, Vulkan no Windows). */
+  gpu?: boolean;
+  /**
+   * Se o servidor morrer usando a GPU (driver de vídeo com defeito; o ggml-vulkan compila os shaders na primeira transcrição, então a quebra
+   * vem na subida ou na primeira inferência), sobe de novo com `-ng` e segue na CPU enquanto esta instância existir. O app liga só no Windows.
+   */
+  cpuFallback?: boolean;
   startupTimeoutMs?: number;
   env?: NodeJS.ProcessEnv;
 };
@@ -72,11 +79,31 @@ export function watchdogLaunch(binary: string, args: string[]): { command: strin
   return { command: '/bin/sh', args: ['-c', WATCHDOG_SCRIPT, 'sh', binary, ...args], detached: true, env: {} };
 }
 
+/** O servidor terminou antes de ficar pronto (o binário rodou; não é erro ao executá-lo). */
+class ServerExited extends Error {}
+
+/** Onde o whisper-server transcreve: placa de vídeo (backend do ggml, como Vulkan, e o nome da placa) ou só a CPU. */
+export type AsrDevice = { gpu: boolean; backend?: string; name?: string; fellBackToCpu: boolean };
+
+/**
+ * Lê o dispositivo do log de inicialização do whisper.cpp: `whisper_backend_init_gpu: using Vulkan0 backend` (ou `no GPU found`, ou
+ * `failed to initialize … backend`, que também deixa na CPU) e o nome da placa em `ggml_vulkan: 0 = AMD Radeon RX 9060 XT (…)`.
+ */
+export function deviceFromLog(log: string): Omit<AsrDevice, 'fellBackToCpu'> {
+  const used = /whisper_backend_init_gpu: using ([A-Za-z]+?)(\d+) backend/.exec(log);
+  if (!used || /whisper_backend_init_gpu: failed to initialize/.test(log)) return { gpu: false };
+  const [, backend, index] = used;
+  const name = new RegExp(`ggml_vulkan: ${index} = (.+?)(?: \\(| \\|)`).exec(log)?.[1];
+  return { gpu: true, backend, ...(name ? { name: name.trim() } : {}) };
+}
+
 export class WhisperServer implements Transcriber {
   private child: ChildProcess | null = null;
   private port = 0;
   private log = '';
   private disposed = false;
+  private onCpu = false;
+  private dev: AsrDevice | null = null;
 
   constructor(private readonly options: WhisperServerOptions) {}
 
@@ -84,9 +111,30 @@ export class WhisperServer implements Transcriber {
     return this.child !== null && this.child.exitCode === null && this.child.signalCode === null;
   }
 
+  /** `true` depois que o servidor caiu usando a GPU (na subida ou numa transcrição) e voltou na CPU (`cpuFallback`). */
+  get fellBackToCpu(): boolean {
+    return this.onCpu;
+  }
+
+  /** Onde a última subida do servidor ficou transcrevendo (lido do log de inicialização); `null` antes da primeira. */
+  get device(): AsrDevice | null {
+    return this.dev;
+  }
+
   async start(): Promise<void> {
     if (this.disposed) throw new Error('whisper-server descartado');
     if (this.running) return;
+    try {
+      await this.launch();
+    } catch (err) {
+      if (!(err instanceof ServerExited) || !this.options.cpuFallback || this.options.gpu === false || this.onCpu) throw err;
+      this.onCpu = true;
+      console.warn(`whisper-server: falhou ao subir com a GPU; tentando de novo só na CPU (-ng). ${err.message}`);
+      await this.launch();
+    }
+  }
+
+  private async launch(): Promise<void> {
     this.port = await freePort();
     this.log = '';
     const args = [
@@ -95,6 +143,7 @@ export class WhisperServer implements Transcriber {
       '--port', String(this.port),
       '-l', this.options.language ?? 'pt',
       '-t', String(this.options.threads ?? defaultThreads()),
+      ...(this.options.gpu === false || this.onCpu ? ['-ng'] : []),
     ];
     // grupo próprio: o SIGKILL de último recurso derruba wrapper e servidor juntos
     const launch = watchdogLaunch(this.options.binary, args);
@@ -105,8 +154,11 @@ export class WhisperServer implements Transcriber {
       windowsHide: true,
     });
     this.child = child;
+    let startup = ''; // o log da subida inteiro (o `log` guarda só o fim): as linhas do dispositivo vêm logo no começo
     const append = (d: Buffer) => {
-      this.log = (this.log + d.toString('utf8')).slice(-4000);
+      const text = d.toString('utf8');
+      this.log = (this.log + text).slice(-4000);
+      if (startup.length < 65_536) startup += text;
     };
     child.stdout?.on('data', append);
     child.stderr?.on('data', append);
@@ -117,10 +169,13 @@ export class WhisperServer implements Transcriber {
     while (Date.now() < deadline) {
       if (spawnError || child.exitCode !== null || child.signalCode !== null) {
         this.child = null;
-        const reason = spawnError ? (spawnError as Error).message : `código ${child.exitCode ?? child.signalCode}`;
-        throw new Error(`whisper-server saiu (${reason}): ${this.log.trim()}`);
+        if (spawnError) throw new Error(`whisper-server saiu (${(spawnError as Error).message}): ${this.log.trim()}`);
+        throw new ServerExited(`whisper-server saiu (código ${child.exitCode ?? child.signalCode}): ${this.log.trim()}`);
       }
-      if (await this.healthy()) return;
+      if (await this.healthy()) {
+        this.dev = { ...deviceFromLog(startup), fellBackToCpu: this.onCpu };
+        return;
+      }
       await sleep(250);
     }
     await this.stop();
@@ -159,6 +214,11 @@ export class WhisperServer implements Transcriber {
   }
 
   async restart(): Promise<void> {
+    // morreu sozinho usando a GPU (o driver pode quebrar só na primeira transcrição, quando o ggml-vulkan compila os shaders): volta na CPU
+    if (this.options.cpuFallback && this.options.gpu !== false && !this.onCpu && this.child !== null && !this.running) {
+      this.onCpu = true;
+      console.warn(`whisper-server: caiu usando a GPU; subindo de novo só na CPU (-ng). ${this.log.trim().slice(-300)}`);
+    }
     await this.stop();
     await this.start();
   }

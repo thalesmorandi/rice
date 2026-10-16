@@ -123,7 +123,7 @@ irm https://raw.githubusercontent.com/WalissonCF/rice/main/install-win.ps1 | iex
 
 **Start with Windows** (Settings › Startup, off by default) opens Rice in the tray, without a window, so the shortcut and the meeting alerts are ready. **Microphone** (Settings › Audio): "Windows default (recommended)" or a specific input; use the same microphone you picked in Teams or Zoom. A chip near **Stop** shows which microphone is being recorded. With 8 GB of RAM or less Rice picks the **light** transcription model (Settings › Audio shows which one is in use and why, and lets you force it) and keeps live ideas and the war room more contained.
 
-**Transcription on the GPU.** The installer brings whisper.cpp built with Vulkan, so transcription runs on the graphics card when there is one (AMD, Intel or NVIDIA, with an up-to-date video driver); on a PC without a GPU or Vulkan driver it keeps using the CPU.
+**Transcription on the GPU.** The installer brings whisper.cpp built with Vulkan, so transcription runs on the graphics card when there is one (AMD, Intel or NVIDIA, with an up-to-date video driver); on a PC without a GPU or Vulkan driver it keeps using the CPU. If the video driver fails when transcription starts, Rice goes back to the CPU on its own, and **Settings › Audio › Use the graphics card (GPU)** turns the GPU off for good.
 
 **Calendar without the system calendar:** in **Settings › Calendar** use **Subscribe by link (ICS)** (Outlook/Microsoft 365: Publish a calendar; Google: "Secret address in iCal format"; iCloud and Fastmail also work) or connect Google directly.
 

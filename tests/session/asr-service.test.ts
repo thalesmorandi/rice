@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AsrService } from '../../src/main/session/asr-service';
+import { setTranscriberGpu } from '../../src/main/asr/transcriber-plan';
+import { AsrService, gpuOptions } from '../../src/main/session/asr-service';
 
 function setup(idleMs = 1000) {
   const servers: Array<{ dispose: ReturnType<typeof vi.fn> }> = [];
@@ -27,6 +28,53 @@ function setup(idleMs = 1000) {
 describe('AsrService sob demanda', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('device: lido do servidor (acompanha a volta para a CPU no meio da gravação) e mantido depois de ele descer', async () => {
+    const server = { dispose: vi.fn(async () => {}), transcribe: vi.fn(), restart: vi.fn(), device: { gpu: true, backend: 'Vulkan', name: 'AMD Radeon RX 9060 XT', fellBackToCpu: false } as object };
+    const service = new AsrService({ idleMs: 1000, deps: { ensureModel: async () => '/m', createServer: async () => server as never, createSession: async () => ({ release: vi.fn(async () => {}) }) as never } });
+    expect(service.device).toBeNull();
+    const pipeline = await service.createPipeline('pt');
+    expect(service.device).toEqual({ gpu: true, backend: 'Vulkan', name: 'AMD Radeon RX 9060 XT', fellBackToCpu: false });
+    server.device = { gpu: false, fellBackToCpu: true }; // o driver caiu numa transcrição e o servidor voltou na CPU
+    expect(service.device).toEqual({ gpu: false, fellBackToCpu: true });
+    await pipeline.finish();
+    await vi.advanceTimersByTimeAsync(1001);
+    expect(service.loaded).toBe(false);
+    expect(service.device).toEqual({ gpu: false, fellBackToCpu: true });
+  });
+
+  it('device: nada se a sessão de VAD falha (não houve gravação)', async () => {
+    const server = { dispose: vi.fn(async () => {}), transcribe: vi.fn(), restart: vi.fn(), device: { gpu: true, backend: 'Vulkan', fellBackToCpu: false } };
+    const service = new AsrService({ idleMs: 1000, deps: { ensureModel: async () => '/m', createServer: async () => server as never, createSession: async () => { throw new Error('onnx'); } } });
+    await expect(service.createPipeline('pt')).rejects.toThrow('onnx');
+    expect(service.device).toBeNull();
+  });
+
+  it('reloadWhenIdle: a GPU mudou durante a gravação; ao terminar, o servidor desce na hora e a próxima sobe outro', async () => {
+    const { service, servers } = setup(1000);
+    const pipeline = await service.createPipeline('pt');
+    service.reloadWhenIdle();
+    await pipeline.finish();
+    await vi.waitFor(() => expect(servers[0]!.dispose).toHaveBeenCalledOnce()); // sem esperar os 1000 ms de ociosidade
+    expect(service.loaded).toBe(false);
+    const next = await service.createPipeline('pt');
+    expect(servers).toHaveLength(2);
+    await next.finish();
+    await vi.advanceTimersByTimeAsync(999);
+    expect(servers[1]!.dispose).not.toHaveBeenCalled(); // pedido atendido: volta à ociosidade normal
+  });
+
+  it('gpuOptions: no Windows, a chave e a volta para a CPU; no Mac, a GPU (Metal) e nenhuma nova tentativa', () => {
+    try {
+      setTranscriberGpu(false);
+      expect(gpuOptions(true)).toEqual({ gpu: false, cpuFallback: true });
+      expect(gpuOptions(false)).toEqual({ gpu: true, cpuFallback: false });
+      setTranscriberGpu(true);
+      expect(gpuOptions(true)).toEqual({ gpu: true, cpuFallback: true });
+    } finally {
+      setTranscriberGpu(undefined);
+    }
+  });
 
   it('warmup só garante o modelo: não sobe o servidor', async () => {
     const { service, servers, ensureModel } = setup();

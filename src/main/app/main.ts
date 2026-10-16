@@ -82,7 +82,7 @@ import { isMac, isWindows, remindersSupported, systemCalendarSupported } from '.
 import { applyMicDevice, listMicInputs } from '../platform/mic-input';
 import { alternatives, isVirtual, parseInputs, pickMic, probeInputs, probeable, type MacInput, type MicPick } from '../platform/mic-pick';
 import { MicMuteMonitor } from '../session/mic-mute';
-import { currentPlan, normalizeMode, setTranscriberMode, type TranscriberMode } from '../asr/transcriber-plan';
+import { currentPlan, normalizeMode, setTranscriberGpu, setTranscriberMode, type TranscriberMode } from '../asr/transcriber-plan';
 import { systemPanelUrl, titleBarOverlay } from '../platform/system';
 import { fromSystemLocale, locale, setLanguage, t, tn, type UiLanguage } from '../i18n';
 import { copyNotes, draftEmail, exportInfo, exportPdf, openMail, type ShareDeps } from '../share/actions';
@@ -121,7 +121,7 @@ import { configureLongNotes, type NotesProgress } from '../session/long-notes';
 import type { AlertActionKind } from '../session/alerts';
 import { saveAnnotations } from '../store/annotations';
 
-type Settings = { /** Última pasta onde um PDF foi salvo (padrão: Downloads). */ exportDir?: string; ai?: unknown; transcriptionLanguage?: TranscriptionLanguage; uiLanguage?: UiLanguage; root: string; keepAudio?: boolean; calendarAsked?: boolean; onboardingDone?: boolean; nubPosition?: Point; defaultTemplateId?: string; vocabulary?: string; vocabularyAttendees?: boolean; /** Acima disso (em caracteres) as notas usam extração por partes; padrão 60000. */ notesDirectMaxChars?: number; /** Beta: separa "Outros" em Pessoa 1, 2… (modelo de voz local de 27 MB, baixado na primeira vez). */ identifySpeakers?: boolean; /** Opt-in "por sua conta e risco": ferramentas MCP só no chat (desligado por padrão). */ chatTools?: boolean; /** "Procurar atualizações": uma consulta anônima por dia ao GitHub (padrão: ligado). */ savedPrompts?: string[]; /** Ocultar dados pessoais ao enviar para a IA (as pastas sensíveis ligam por conta própria). */ redactPii?: boolean; /** Guarda padrão (as pastas podem definir a própria). */ retentionDefault?: FolderRetention; /** Aviso de consentimento ao gravar (padrão: ligado) e o texto próprio (vazio = o padrão no idioma da reunião). */ consentRemind?: boolean; consentText?: string; /** Modo 100% local: nada usa a rede (só localhost); só o provedor Modelo local. */ fullyLocal?: boolean; /** Atalho global de gravar/parar (padrão ⌥⌘R; "none" = nenhum). */ recordShortcut?: string; checkUpdates?: boolean; /** Mac: escolher o microfone sozinho ao gravar (padrão: ligado). */ micAuto?: boolean; /** Windows: abrir com o Windows, só na bandeja (padrão: desligado). */ launchAtLogin?: boolean; /** Windows: id do microfone escolhido (ausente = padrão do Windows). */ micDevice?: string; /** Modelo de transcrição: automático (pela memória), leve ou completo. */ asrModel?: AsrChoice; /** Última consulta de versão (data e último commit do `main`). */ updateCheck?: UpdateState; /** Último template de ideias escolhido (padrão das reuniões novas). */ lastIdeaTemplate?: string; /** Avisos de uma vez só na tela de IA (ex.: o Gemini por assinatura foi descontinuado). */ aiNotices?: { geminiSub?: boolean }; /** Limite de ciclos de cada trilha da War room por reunião (0 = sem limite; padrão 120). */ warroomMaxCycles?: number; /** Minutos sem fala até o "ainda gravando?" (padrão 15; 0 desliga). */ inactivityMinutes?: number; /** Apps para os quais o usuário disse "não perguntar mais". */ mutedApps?: string[]; /** Mostrar os lembretes de hoje no Início (padrão: ligado, se o macOS permitir). */ showReminders?: boolean; /** Capturas de tela durante a gravação (desligado por padrão; só liga depois do aviso). */ screenshots?: boolean; /** Memória entre reuniões (padrão: ligada). */ memory?: boolean; /** Domínios do próprio usuário (do participante `self` da agenda), para a memória não tratar a própria empresa como cliente. */ memoryOwnDomains?: string[]; /** Aviso local quando uma pendência minha vence (padrão: ligado). */ followupNotify?: boolean; };
+type Settings = { /** Última pasta onde um PDF foi salvo (padrão: Downloads). */ exportDir?: string; ai?: unknown; transcriptionLanguage?: TranscriptionLanguage; uiLanguage?: UiLanguage; root: string; keepAudio?: boolean; calendarAsked?: boolean; onboardingDone?: boolean; nubPosition?: Point; defaultTemplateId?: string; vocabulary?: string; vocabularyAttendees?: boolean; /** Acima disso (em caracteres) as notas usam extração por partes; padrão 60000. */ notesDirectMaxChars?: number; /** Beta: separa "Outros" em Pessoa 1, 2… (modelo de voz local de 27 MB, baixado na primeira vez). */ identifySpeakers?: boolean; /** Opt-in "por sua conta e risco": ferramentas MCP só no chat (desligado por padrão). */ chatTools?: boolean; /** "Procurar atualizações": uma consulta anônima por dia ao GitHub (padrão: ligado). */ savedPrompts?: string[]; /** Ocultar dados pessoais ao enviar para a IA (as pastas sensíveis ligam por conta própria). */ redactPii?: boolean; /** Guarda padrão (as pastas podem definir a própria). */ retentionDefault?: FolderRetention; /** Aviso de consentimento ao gravar (padrão: ligado) e o texto próprio (vazio = o padrão no idioma da reunião). */ consentRemind?: boolean; consentText?: string; /** Modo 100% local: nada usa a rede (só localhost); só o provedor Modelo local. */ fullyLocal?: boolean; /** Atalho global de gravar/parar (padrão ⌥⌘R; "none" = nenhum). */ recordShortcut?: string; checkUpdates?: boolean; /** Mac: escolher o microfone sozinho ao gravar (padrão: ligado). */ micAuto?: boolean; /** Windows: abrir com o Windows, só na bandeja (padrão: desligado). */ launchAtLogin?: boolean; /** Windows: id do microfone escolhido (ausente = padrão do Windows). */ micDevice?: string; /** Modelo de transcrição: automático (pela memória), leve ou completo. */ asrModel?: AsrChoice; /** Windows: transcrição na GPU (padrão: ligado); desligado, o whisper-server sobe com -ng. */ asrGpu?: boolean; /** Última consulta de versão (data e último commit do `main`). */ updateCheck?: UpdateState; /** Último template de ideias escolhido (padrão das reuniões novas). */ lastIdeaTemplate?: string; /** Avisos de uma vez só na tela de IA (ex.: o Gemini por assinatura foi descontinuado). */ aiNotices?: { geminiSub?: boolean }; /** Limite de ciclos de cada trilha da War room por reunião (0 = sem limite; padrão 120). */ warroomMaxCycles?: number; /** Minutos sem fala até o "ainda gravando?" (padrão 15; 0 desliga). */ inactivityMinutes?: number; /** Apps para os quais o usuário disse "não perguntar mais". */ mutedApps?: string[]; /** Mostrar os lembretes de hoje no Início (padrão: ligado, se o macOS permitir). */ showReminders?: boolean; /** Capturas de tela durante a gravação (desligado por padrão; só liga depois do aviso). */ screenshots?: boolean; /** Memória entre reuniões (padrão: ligada). */ memory?: boolean; /** Domínios do próprio usuário (do participante `self` da agenda), para a memória não tratar a própria empresa como cliente. */ memoryOwnDomains?: string[]; /** Aviso local quando uma pendência minha vence (padrão: ligado). */ followupNotify?: boolean; };
 
 // Modo 100% local: o fetch global só fala com localhost enquanto o modo estiver ligado (rede de segurança por baixo dos bloqueios de cada recurso)
 installNetworkGuard();
@@ -213,6 +213,7 @@ async function loadSettings(): Promise<Settings> {
   setLocalMode(cachedSettings.fullyLocal === true); // o Modo 100% local vale desde a primeira leitura
   if (isWindows()) applyMicDevice(process.env, cachedSettings.micDevice); // o rice-audio.exe herda RICE_MIC_DEVICE
   setTranscriberMode(cachedSettings.asrModel); // só o Windows usa (o Mac ignora o modo)
+  setTranscriberGpu(cachedSettings.asrGpu); // idem: o Mac usa sempre o Metal
   return cachedSettings;
 }
 
@@ -1594,6 +1595,7 @@ function registerIpc(runner: AiRunner): void {
       micDevice: settings.micDevice ?? null,
       micAuto: settings.micAuto !== false,
       asrModel: asrChoiceOf(settings.asrModel),
+      asrGpu: settings.asrGpu !== false,
       fullyLocal: settings.fullyLocal === true,
       redactPii: settings.redactPii === true,
       retentionDefault: settings.retentionDefault ?? {},
@@ -1878,7 +1880,7 @@ function registerIpc(runner: AiRunner): void {
   const profileNow = async () => {
     const choice = asrChoiceOf((await loadSettings()).asrModel);
     const fake = TEST_INSTANCE ? { gb: Number(process.env.RICE_TEST_RAM_GB), cores: Number(process.env.RICE_TEST_CORES) } : { gb: 0, cores: 0 }; // só instância de teste (prints)
-    return { choice, ...machineProfile({ platform: PLATFORM_FOR_UI, totalMemBytes: fake.gb > 0 ? fake.gb * 1024 ** 3 : totalmem(), logicalCores: fake.cores > 0 ? fake.cores : availableParallelism(), choice }) };
+    return { choice, ...machineProfile({ platform: PLATFORM_FOR_UI, totalMemBytes: fake.gb > 0 ? fake.gb * 1024 ** 3 : totalmem(), logicalCores: fake.cores > 0 ? fake.cores : availableParallelism(), choice }), device: asrService?.device ?? null }; // device: onde a última gravação foi transcrita
   };
   handle('audio:profile', () => profileNow());
   handle('audio:set-asr-model', async (_e, choice: unknown) => {
@@ -1894,6 +1896,19 @@ function registerIpc(runner: AiRunner): void {
       void asrService.warmup();
     }
     return { ok: true as const, appliedNow: !recording, ...p };
+  });
+  // Windows: transcrição na GPU (padrão ligado); desligada, o whisper-server sobe com -ng (só CPU), para escapar de driver de vídeo com defeito
+  handle('audio:set-asr-gpu', async (_e, on: unknown) => {
+    if (!isWindows() && !TEST_INSTANCE) return { ok: false as const }; // o Mac usa sempre o Metal do whisper-server
+    const next = on !== false;
+    await saveSettings({ ...(await loadSettings()), asrGpu: next });
+    setTranscriberGpu(next);
+    const recording = session !== null && session.state !== 'idle';
+    if (asrService && isWindows()) {
+      if (recording) asrService.reloadWhenIdle(); // a gravação de agora segue como começou; ao terminar, o servidor desce na hora
+      else await asrService.stop().catch(() => {}); // sem gravação: a troca vale já
+    }
+    return { ok: true as const, appliedNow: !recording, asrGpu: next };
   });
 
   // `headings`: idioma dos nomes das seções dos embutidos (a página da reunião passa o idioma dela; senão vale o do app)

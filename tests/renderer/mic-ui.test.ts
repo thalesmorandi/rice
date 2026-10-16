@@ -128,6 +128,59 @@ it('modelo de transcrição: mostra o em uso e o motivo (leve por pouca memória
   await vi.waitFor(() => expect(section.textContent).toContain('Em uso: modelo completo (escolhido por você)'));
 });
 
+it('GPU (Windows): ligada por padrão, mostra onde a última gravação foi transcrita e confirma cada troca (sem reiniciar o Rice)', async () => {
+  const device = { gpu: true, backend: 'Vulkan', name: 'AMD Radeon RX 9060 XT', fellBackToCpu: false };
+  let recording = false;
+  const setAsrGpu = vi.fn(async (on: boolean) => ({ ok: true, appliedNow: !recording, asrGpu: on }));
+  boot({ audioProfile: async () => ({ choice: 'auto', model: 'full', tier: 'large', ramGb: 16, cores: 8, threads: 6, reason: 'enough-ram', light: false, device }), setAsrGpu });
+  await openAudio();
+  const section = g.document.querySelector('[data-section=audio]') as any;
+  const sw = section.querySelector('#asr-gpu');
+  expect(sw.checked).toBe(true);
+  expect(section.textContent).toContain('Usar a placa de vídeo (GPU)');
+  await vi.waitFor(() => expect(section.textContent).toContain('Última gravação: transcrita na placa de vídeo (AMD Radeon RX 9060 XT).'));
+  const feedback = () => section.querySelector('.audio-gpu-feedback');
+  expect(feedback().hidden).toBe(true);
+  sw.checked = false;
+  sw.dispatchEvent(new g.window.Event('change'));
+  await vi.waitFor(() => expect(setAsrGpu).toHaveBeenCalledWith(false));
+  await vi.waitFor(() => expect(feedback().textContent).toBe('Salvo: a partir da próxima gravação, o Rice usa só a CPU. Não precisa reiniciar o Rice.'));
+  expect(feedback().hidden).toBe(false);
+  recording = true; // gravando: a de agora continua como começou
+  sw.checked = true;
+  sw.dispatchEvent(new g.window.Event('change'));
+  await vi.waitFor(() => expect(feedback().textContent).toBe('Salvo. A gravação de agora continua como começou; a próxima já usa a nova escolha.'));
+});
+
+it('GPU (Windows): sem gravação ainda, e quando a placa falhou ao iniciar e o Rice voltou para a CPU', async () => {
+  boot({ setAsrGpu: vi.fn(), audioProfile: async () => ({ choice: 'auto', model: 'full', tier: 'large', ramGb: 16, cores: 8, threads: 6, reason: 'enough-ram', light: false, device: null }) });
+  await openAudio();
+  await vi.waitFor(() => expect(g.document.querySelector('[data-section=audio] .audio-gpu-last').textContent).toBe('Ainda sem gravação desde que o Rice abriu: depois da primeira, aparece aqui onde ela foi transcrita.'));
+  const text = g.window.RiceAudioSettings.deviceText;
+  expect(text({ gpu: false, fellBackToCpu: true })).toBe('Última gravação: transcrita na CPU, porque a placa de vídeo falhou ao iniciar.');
+  expect(text({ gpu: false, fellBackToCpu: false })).toBe('Última gravação: transcrita só na CPU.');
+  expect(text({ gpu: true, backend: 'Vulkan', fellBackToCpu: false })).toBe('Última gravação: transcrita na placa de vídeo (Vulkan).');
+});
+
+it('GPU (Windows): se não salvou, a chave volta como estava e não promete nada', async () => {
+  const setAsrGpu = vi.fn(async () => ({ ok: false }));
+  boot({ setAsrGpu });
+  await openAudio();
+  const section = g.document.querySelector('[data-section=audio]') as any;
+  const sw = section.querySelector('#asr-gpu');
+  sw.checked = false;
+  sw.dispatchEvent(new g.window.Event('change'));
+  await vi.waitFor(() => expect(sw.checked).toBe(true));
+  expect(section.querySelector('.audio-gpu-feedback').hidden).toBe(true);
+});
+
+it('GPU no Mac: sem a chave (o Mac usa sempre o Metal)', async () => {
+  boot({ setAsrGpu: vi.fn() }, 'darwin');
+  await openAudio();
+  expect(g.document.querySelector('[data-section=audio]')).not.toBeNull();
+  expect(g.document.querySelector('[data-section=audio] #asr-gpu')).toBeNull();
+});
+
 it('detalhe da reunião mostra o microfone capturado', async () => {
   const t = boot({ readMeeting: async () => ({ meta: { dir: '/R/a', title: 'Reunião', startedAt: new Date().toISOString(), endedAt: new Date().toISOString(), state: 'done', notesStatus: 'done', gaps: [], micName: 'FIFINE K669' }, transcript: '', annotations: '', notes: '', chat: [] }) });
   await vi.waitFor(() => expect(g.document.querySelector('.meeting')).not.toBeNull());

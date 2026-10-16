@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 import { WHISPER_MODELS } from '../../src/main/asr/model-download';
-import { LIGHT_LIMITS, normalizeMode, planTranscriber, threadsFor } from '../../src/main/asr/transcriber-plan';
+import { LIGHT_LIMITS, normalizeMode, planTranscriber, setTranscriberGpu, threadsFor, transcriberUsesGpu } from '../../src/main/asr/transcriber-plan';
 
 const GIB = 1024 ** 3;
 const pc = (ramGiB: number, logicalCores: number) => ({ totalMemBytes: ramGiB * GIB, logicalCores });
@@ -59,5 +59,19 @@ describe('modelo e threads do transcritor', () => {
     expect(normalizeMode('full')).toBe('full');
     expect(normalizeMode('large')).toBe('full');
     for (const v of [undefined, null, 'x', 3]) expect(normalizeMode(v)).toBe('auto');
+  });
+
+  test('GPU: ligada por padrão; só um false salvo a desliga, e só no Windows (o Mac usa sempre o Metal)', () => {
+    try {
+      for (const v of [undefined, null, true, 'x']) {
+        setTranscriberGpu(v);
+        expect(transcriberUsesGpu(true)).toBe(true);
+      }
+      setTranscriberGpu(false);
+      expect(transcriberUsesGpu(true)).toBe(false);
+      expect(transcriberUsesGpu(false)).toBe(true);
+    } finally {
+      setTranscriberGpu(undefined);
+    }
   });
 });

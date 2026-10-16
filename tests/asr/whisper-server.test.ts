@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterEach, expect, test, vi } from 'vitest';
-import { WhisperServer } from '../../src/main/asr/whisper-server';
+import { WhisperServer, type WhisperServerOptions } from '../../src/main/asr/whisper-server';
 import { pcmToWav } from '../../src/shared/wav';
 import { makeTmpDir } from '../helpers/tmp';
 
@@ -11,11 +11,11 @@ afterEach(async () => {
   await Promise.all(servers.splice(0).map((s) => s.stop()));
 });
 
-async function server(mode = 'ok', modelExists = true) {
+async function server(mode = 'ok', modelExists = true, extra: Partial<WhisperServerOptions> = {}) {
   const dir = await makeTmpDir();
   const modelPath = join(dir, 'model.bin');
   if (modelExists) await writeFile(modelPath, 'x');
-  const s = new WhisperServer({ binary: FAKE, modelPath, threads: 2, startupTimeoutMs: 5000, env: { ...process.env, FAKE_WHISPER_MODE: mode } });
+  const s = new WhisperServer({ binary: FAKE, modelPath, threads: 2, startupTimeoutMs: 5000, env: { ...process.env, FAKE_WHISPER_MODE: mode }, ...extra });
   servers.push(s);
   return s;
 }
@@ -64,6 +64,83 @@ test('servidor que morre na inferência: transcribe rejeita e restart recupera',
   await expect(s.transcribe(pcmToWav(Buffer.alloc(32)))).rejects.toThrow();
   await s.restart();
   expect(s.running).toBe(true);
+});
+
+test('gpu: false sobe o servidor com -ng (só CPU)', async () => {
+  const s = await server('gpu-crash', true, { gpu: false });
+  await s.start();
+  expect(s.running).toBe(true);
+  expect(s.fellBackToCpu).toBe(false);
+  expect(s.device).toEqual({ gpu: false, fellBackToCpu: false });
+});
+
+test('device: lê do log de inicialização a placa em uso', async () => {
+  const s = await server();
+  expect(s.device).toBeNull();
+  await s.start();
+  expect(s.device).toEqual({ gpu: true, backend: 'Vulkan', name: 'Fake GPU', fellBackToCpu: false });
+});
+
+test('cpuFallback: o servidor que morre ao subir com a GPU sobe de novo com -ng e segue na CPU no restart', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const s = await server('gpu-crash', true, { cpuFallback: true });
+    await s.start();
+    expect(s.running).toBe(true);
+    expect(s.fellBackToCpu).toBe(true);
+    expect(s.device).toEqual({ gpu: false, fellBackToCpu: true });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ErrorDeviceLost'));
+    await s.restart();
+    expect(s.running).toBe(true);
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('cpuFallback: o servidor que morre na primeira transcrição com a GPU volta na CPU no restart', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const s = await server('gpu-crash-on-inference', true, { cpuFallback: true });
+    await s.start();
+    expect(s.device).toEqual({ gpu: true, backend: 'Vulkan', name: 'Fake GPU', fellBackToCpu: false });
+    await expect(s.transcribe(pcmToWav(Buffer.alloc(32)))).rejects.toThrow();
+    // o pipeline espera o backoff (1 s ou mais) antes do restart; nesse tempo o vigia (no Mac, o sh confere a cada 1 s) já viu a morte
+    await vi.waitFor(() => expect(s.running).toBe(false), { timeout: 3000 });
+    await s.restart();
+    expect(s.fellBackToCpu).toBe(true);
+    expect(s.device).toEqual({ gpu: false, fellBackToCpu: true });
+    expect(await s.transcribe(pcmToWav(Buffer.alloc(3200)))).toMatch(/^ olá/);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('caiu usando a GPU'));
+  } finally {
+    warn.mockRestore();
+  }
+});
+
+test('sem cpuFallback (o Mac), o restart depois de cair na transcrição sobe de novo com a GPU, como antes', async () => {
+  const s = await server('gpu-crash-on-inference');
+  await s.start();
+  await expect(s.transcribe(pcmToWav(Buffer.alloc(32)))).rejects.toThrow();
+  await vi.waitFor(() => expect(s.running).toBe(false), { timeout: 3000 });
+  await s.restart();
+  expect(s.fellBackToCpu).toBe(false);
+  expect(s.device).toEqual({ gpu: true, backend: 'Vulkan', name: 'Fake GPU', fellBackToCpu: false });
+});
+
+test('sem cpuFallback (o Mac), o servidor que morre ao subir rejeita como antes, sem nova tentativa', async () => {
+  const s = await server('gpu-crash');
+  await expect(s.start()).rejects.toThrow('ErrorDeviceLost');
+  expect(s.fellBackToCpu).toBe(false);
+});
+
+test('cpuFallback não esconde outros erros: modelo ausente continua rejeitando com a mensagem do servidor', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    const s = await server('ok', false, { cpuFallback: true });
+    await expect(s.start()).rejects.toThrow('failed to load model');
+    expect(s.running).toBe(false);
+  } finally {
+    warn.mockRestore();
+  }
 });
 
 test('transcribe antes do start rejeita', async () => {

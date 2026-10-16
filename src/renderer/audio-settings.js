@@ -1,5 +1,6 @@
 // Configurações › Áudio: (1) Microfone — no Windows, seletor "Padrão do Windows (recomendado)" + as entradas; no Mac, a explicação de que vale a entrada
-// padrão do macOS; (2) Modelo de transcrição em uso e o motivo (modo leve com pouca memória), com a opção de forçar. Só createElement/textContent.
+// padrão do macOS; (2) Modelo de transcrição em uso e o motivo (modo leve com pouca memória), com a opção de forçar; (3) no Windows, a chave da GPU.
+// Só createElement/textContent.
 (function () {
   const t = (key, vars) => window.RiceI18n.t(key, vars);
 
@@ -15,8 +16,15 @@
     return key ? t(key, { ram: profile.ramGb, cores: profile.cores, tier: profile.tier, threads: profile.threads }) : '';
   }
 
-  /** Os nós da seção. `row(label, help, control)` é o do settings.js. */
-  function nodes({ rice, settings, row }) {
+  /** "Última gravação: transcrita na placa de vídeo (AMD Radeon RX 9060 XT)" etc.; o main lê o dispositivo do log do whisper-server. */
+  function deviceText(device) {
+    if (!device) return t('audio.gpu.last.none');
+    if (device.gpu) return t('audio.gpu.last.gpu', { device: device.name || device.backend || '' });
+    return t(device.fellBackToCpu ? 'audio.gpu.last.fallback' : 'audio.gpu.last.cpu');
+  }
+
+  /** Os nós da seção. `row(label, help, control)` e `toggle(id, checked, label)` são os do settings.js. */
+  function nodes({ rice, settings, row, toggle }) {
     const out = [];
     const WIN = rice.platform === 'win32';
 
@@ -99,8 +107,27 @@
         out.push(using);
       }
     }
+
+    // 3) GPU, só no Windows: ligada por padrão; desligada, o whisper-server roda só na CPU (-ng), para escapar de driver de vídeo com defeito.
+    // Embaixo: onde a última gravação foi transcrita e, a cada troca, quando ela passa a valer (nunca é preciso reiniciar o Rice).
+    if (WIN && rice.setAsrGpu && toggle) {
+      const gpu = toggle('asr-gpu', settings.asrGpu !== false, t('audio.gpu.label'));
+      const last = el('p', { className: 'set-help audio-gpu-last' }, []);
+      const feedback = el('p', { className: 'set-help audio-gpu-feedback', hidden: true }, []);
+      gpu.onchange = async () => {
+        const r = await rice.setAsrGpu(gpu.checked).catch(() => null);
+        if (!r || !r.ok) {
+          gpu.checked = !gpu.checked; // não salvou: a chave volta como estava
+          return;
+        }
+        feedback.textContent = r.appliedNow === false ? t('audio.gpu.saved-recording') : t(r.asrGpu ? 'audio.gpu.saved-on' : 'audio.gpu.saved-off');
+        feedback.hidden = false;
+      };
+      if (rice.audioProfile) rice.audioProfile().then((p) => { last.textContent = deviceText(p && p.device); }).catch(() => {});
+      out.push(row(t('audio.gpu.label'), t('audio.gpu.help'), gpu), last, feedback);
+    }
     return out;
   }
 
-  window.RiceAudioSettings = { nodes, usingText };
+  window.RiceAudioSettings = { nodes, usingText, deviceText };
 })();

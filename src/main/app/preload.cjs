@@ -128,6 +128,7 @@ contextBridge.exposeInMainWorld('rice', {
   micMuteIgnore: () => ipcRenderer.invoke('mic:mute-ignore'),
   audioProfile: () => ipcRenderer.invoke('audio:profile'),
   setAsrModel: (choice) => ipcRenderer.invoke('audio:set-asr-model', choice),
+  setAsrGpu: (on) => ipcRenderer.invoke('audio:set-asr-gpu', on),
   setLaunchAtLogin: (on) => ipcRenderer.invoke('settings:set-launch-at-login', on),
   winUpdateStatus: () => ipcRenderer.invoke('winupdate:status'),
   winUpdateCheck: () => ipcRenderer.invoke('winupdate:check'),

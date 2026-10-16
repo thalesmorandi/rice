@@ -5,8 +5,8 @@ import { whisperModelFor, WHISPER_MODELS, type ModelSpec } from './model-downloa
 
 /**
  * Qual modelo do Whisper e quantas threads usar. No Mac nada muda (large-v3-turbo q5_0 com `defaultThreads()`, Metal do whisper-server).
- * No Windows o whisper-server roda só na CPU: PC com pouca RAM ou poucos núcleos usa o "modo leve" (small ou base quantizados),
- * escolhido sozinho; em Configurações o usuário pode forçar o grande ou o leve.
+ * No Windows a escolha olha só a RAM e a CPU (a GPU, quando o whisper-server a usa, só acelera): PC com pouca RAM ou poucos núcleos usa o
+ * "modo leve" (small ou base quantizados), escolhido sozinho; em Configurações o usuário pode forçar o grande ou o leve, e desligar a GPU.
  */
 /** Os mesmos valores de `settings.asrModel` do app: 'full' = modelo grande, 'light' = small/base, 'auto' = pelo hardware. */
 export type TranscriberMode = 'auto' | 'full' | 'light';
@@ -51,6 +51,13 @@ export const setTranscriberMode = (mode: unknown): void => {
   preference = normalizeMode(mode);
 };
 export const getTranscriberMode = (): TranscriberMode => preference;
+
+/** `settings.asrGpu` (padrão: ligado). Desligado, o whisper-server do Windows sobe com `-ng` (só CPU); o Mac ignora (Metal, como sempre). */
+let gpuPreference = true;
+export const setTranscriberGpu = (on: unknown): void => {
+  gpuPreference = on !== false;
+};
+export const transcriberUsesGpu = (windows = isWindows()): boolean => !windows || gpuPreference;
 
 /** O plano de agora (modo das configurações + hardware desta máquina). */
 export function currentPlan(): TranscriberPlan {

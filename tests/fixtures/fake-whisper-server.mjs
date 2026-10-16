@@ -14,6 +14,14 @@ if (arg('-l') !== 'pt') {
   console.error('error: expected -l pt');
   process.exit(1);
 }
+if (mode === 'gpu-crash' && !args.includes('-ng')) {
+  // driver de vídeo com defeito: morre ao subir com a GPU; com -ng (só CPU) sobe normal
+  console.error('ggml_vulkan: vk::Device::createComputePipeline: ErrorDeviceLost');
+  process.exit(2);
+}
+// as linhas de dispositivo do whisper.cpp v1.9.2, que o WhisperServer lê para mostrar onde transcreve
+if (args.includes('-ng')) console.error('whisper_backend_init_gpu: no GPU found');
+else console.error('ggml_vulkan: 0 = Fake GPU (test driver) | uma: 0 | fp16: 1\nwhisper_backend_init_gpu: using Vulkan0 backend');
 
 const loadedAt = Date.now() + 300;
 const server = createServer((req, res) => {
@@ -25,6 +33,7 @@ const server = createServer((req, res) => {
   if (req.method === 'GET' && req.url === '/') return res.writeHead(200).end('<html>whisper</html>');
   if (req.method === 'POST' && req.url === '/inference') {
     if (mode === 'crash-on-inference') process.exit(3);
+    if (mode === 'gpu-crash-on-inference' && !args.includes('-ng')) process.exit(4); // o ggml-vulkan compila os shaders na 1ª transcrição
     const parts = [];
     req.on('data', (d) => parts.push(d));
     req.on('end', () => {
