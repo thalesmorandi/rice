@@ -75,7 +75,7 @@ jobs:
     needs: app
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 45  # inclui compilar o whisper-server com Vulkan
     steps:
       - uses: actions/checkout@v4
       # node-gyp (better-sqlite3 quando falta binario pronto) quebra com o Python 3.14 das maquinas novas
@@ -94,6 +94,8 @@ jobs:
         run: |
           cmake -S native/win -B build/win -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/win
+      # o dist:win compila o whisper-server com Vulkan (scripts/build-whisper-win.ps1); no CI, sem o SDK ele falha em vez de sair só CPU
+      - uses: ./.github/actions/vulkan-sdk
       - name: Instalador NSIS (sem assinatura)
         run: npm run dist:win
       # latest.yml e o .blockmap são o que o electron-updater lê para a atualização automática (ver release-windows.yml)

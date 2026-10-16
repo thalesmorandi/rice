@@ -29,6 +29,9 @@ $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer
 $vs = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath } else { $null }
 if (-not $vs) { Die 'faltam as ferramentas C++ do Visual Studio. Instale com: winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --passive"' 'the Visual Studio C++ tools are missing. Install them with: winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --passive"' }
 Say 'CMake e ferramentas C++: ok' 'CMake and C++ tools: ok'
+# Vulkan SDK (opcional): com ele o whisper-server é compilado com GPU; sem ele, o instalador leva o whisper-server oficial, só CPU
+if ($env:VULKAN_SDK) { Say 'Vulkan SDK: ok (transcrição na GPU)' 'Vulkan SDK: ok (transcription on the GPU)' }
+else { Say 'aviso: sem o Vulkan SDK a transcrição fica só na CPU. Para usar a GPU: winget install KhronosGroup.VulkanSDK' 'warning: without the Vulkan SDK transcription stays on the CPU. To use the GPU: winget install KhronosGroup.VulkanSDK' }
 
 if ($Check) { Say 'ambiente conferido (-Check): nada foi instalado nem gerado.' 'environment checked (-Check): nothing was installed or built.'; exit 0 }
 
@@ -51,7 +54,7 @@ if (-not (Test-Path 'native\third_party\webrtc-apm-win\lib')) {
 Say 'compilando os helpers nativos (rice-audio.exe, rice-detector.exe)…' 'building the native helpers (rice-audio.exe, rice-detector.exe)…'
 cmake -S native/win -B build/win -A x64; if ($LASTEXITCODE -ne 0) { Die 'o CMake não configurou os helpers.' 'CMake could not configure the helpers.' }
 cmake --build build/win --config Release; if ($LASTEXITCODE -ne 0) { Die 'a compilação dos helpers falhou. Veja as mensagens acima.' 'building the helpers failed. See the messages above.' }
-Say 'gerando o instalador (npm run dist:win; baixa o whisper-server oficial, leva alguns minutos)…' 'building the installer (npm run dist:win; downloads the official whisper-server, takes a few minutes)…'
+Say 'gerando o instalador (npm run dist:win; prepara o whisper-server, leva alguns minutos)…' 'building the installer (npm run dist:win; prepares the whisper-server, takes a few minutes)…'
 npm run dist:win; if ($LASTEXITCODE -ne 0) { Die 'npm run dist:win falhou. Veja as mensagens acima.' 'npm run dist:win failed. See the messages above.' }
 
 $setup = Get-ChildItem dist -Filter 'Rice-Setup-*.exe' | Sort-Object LastWriteTime -Descending | Select-Object -First 1

@@ -13,7 +13,7 @@
     "build:app": "esbuild src/main/app/main.ts --bundle --platform=node --format=cjs --target=node22 --external:electron --external:onnxruntime-node --external:better-sqlite3 --external:electron-updater --outfile=out/main.cjs && node scripts/copy-app-files.mjs && node scripts/write-build-info.mjs",
     "app": "npm run build:app && electron .",
     "dist": "scripts/build-native.sh && scripts/stage-native.sh && npm run build:app && electron-builder --mac --arm64",
-    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/stage-native-win.ps1 && powershell -ExecutionPolicy Bypass -File scripts/fetch-whisper-win.ps1 && npm run build:app && electron-builder --win --x64 --publish never",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/stage-native-win.ps1 && powershell -ExecutionPolicy Bypass -File scripts/build-whisper-win.ps1 && npm run build:app && electron-builder --win --x64 --publish never",
     "smoke:win": "node scripts/smoke.mjs"
   },
   "dependencies": {

@@ -14,7 +14,7 @@ export function modelsDir(): string {
 
 export function whisperServerBinary(): string {
   if (process.env.RICE_WHISPER_SERVER) return process.env.RICE_WHISPER_SERVER;
-  // Windows: o instalador leva o whisper-server.exe de whisper.cpp em resources\win (ver scripts/fetch-whisper-win.ps1)
+  // Windows: o instalador leva o whisper-server.exe de whisper.cpp em resources\win (ver scripts/build-whisper-win.ps1)
   return isWindows() ? join(repoRoot(), 'resources', 'win', exeName('whisper-server')) : '/opt/homebrew/bin/whisper-server';
 }
 

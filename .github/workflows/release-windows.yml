@@ -35,6 +35,10 @@ jobs:
         run: |
           cmake -S native/win -B build/win -G Ninja -DCMAKE_BUILD_TYPE=Release
           cmake --build build/win
+      # o dist:win compila o whisper-server com Vulkan (scripts/build-whisper-win.ps1); no CI, sem o SDK ele falha em vez de sair só CPU.
+      # O if mantém o workflow_dispatch funcionando com tags anteriores a esse script (que ainda baixam o whisper-server só CPU).
+      - uses: ./.github/actions/vulkan-sdk
+        if: hashFiles('scripts/build-whisper-win.ps1') != ''
       - name: Instalador NSIS (sem assinatura); o electron-builder gera também o latest.yml e o .blockmap
         run: npm run dist:win
       - name: Conferir que os três arquivos existem

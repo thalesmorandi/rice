@@ -123,14 +123,16 @@ irm https://raw.githubusercontent.com/WalissonCF/rice/main/install-win.ps1 | iex
 
 **Start with Windows** (Settings › Startup, off by default) opens Rice in the tray, without a window, so the shortcut and the meeting alerts are ready. **Microphone** (Settings › Audio): "Windows default (recommended)" or a specific input; use the same microphone you picked in Teams or Zoom. A chip near **Stop** shows which microphone is being recorded. With 8 GB of RAM or less Rice picks the **light** transcription model (Settings › Audio shows which one is in use and why, and lets you force it) and keeps live ideas and the war room more contained.
 
+**Transcription on the GPU.** The installer brings whisper.cpp built with Vulkan, so transcription runs on the graphics card when there is one (AMD, Intel or NVIDIA, with an up-to-date video driver); on a PC without a GPU or Vulkan driver it keeps using the CPU.
+
 **Calendar without the system calendar:** in **Settings › Calendar** use **Subscribe by link (ICS)** (Outlook/Microsoft 365: Publish a calendar; Google: "Secret address in iCal format"; iCloud and Fastmail also work) or connect Google directly.
 
 **Differences from the Mac:** no Antigravity, no Reminders, no system Calendar; system audio is captured by WASAPI loopback (echo cancellation is the part still being finished); native notifications have no action buttons (clicking the notice does the main action); the keys are protected by Windows (DPAPI) and shortcuts use Ctrl.
 
-**For developers only:** `install.ps1` builds Rice from the source (it needs Node 22, CMake and the Visual Studio C++ tools):
+**For developers only:** `install.ps1` builds Rice from the source (it needs Node 22, CMake and the Visual Studio C++ tools). With the Vulkan SDK (`winget install KhronosGroup.VulkanSDK`, then open a new terminal) it also builds whisper.cpp with GPU support; without it, the installer gets the official CPU-only whisper-server:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File install.ps1 -Check   # checks Windows, Node 22, CMake and the Visual Studio C++ tools
+powershell -ExecutionPolicy Bypass -File install.ps1 -Check   # checks Windows, Node 22, CMake, the Visual Studio C++ tools and the Vulkan SDK
 powershell -ExecutionPolicy Bypass -File install.ps1           # builds the helpers and the installer (dist\Rice-Setup-*.exe) and opens it
 ```
 

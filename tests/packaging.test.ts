@@ -40,6 +40,9 @@ describe('empacotamento (dmg/zip arm64)', () => {
     expect(ignore).toContain('dist/');
     expect(ignore).toContain('native-bin/');
   });
+  test('o whisper-server do Windows (resources/win/, gerado pelo dist:win) fora do git', () => {
+    expect(readFileSync('.gitignore', 'utf8').split('\n')).toContain('resources/win/');
+  });
 });
 
 describe('install.sh', () => {
@@ -83,7 +86,7 @@ describe('empacotamento do Windows (nsis x64)', () => {
   test('o build:app não usa cp (não existe no cmd.exe); dist:win prepara helpers e whisper antes', () => {
     expect(pkg.scripts['build:app']).not.toMatch(/cp/);
     expect(readFileSync('scripts/copy-app-files.mjs', 'utf8')).toContain('icon.ico');
-    expect(pkg.scripts['dist:win']).toMatch(/stage-native-win\.ps1.*fetch-whisper-win\.ps1.*build:app.*electron-builder --win --x64/);
+    expect(pkg.scripts['dist:win']).toMatch(/stage-native-win\.ps1.*build-whisper-win\.ps1.*build:app.*electron-builder --win --x64/);
     expect(pkg.scripts.dist).toBe('scripts/build-native.sh && scripts/stage-native.sh && npm run build:app && electron-builder --mac --arm64'); // o do Mac não mudou
   });
   test('whisper-server: release oficial do ggml-org com SHA-256 fixado, conferido antes de extrair', () => {
@@ -93,9 +96,23 @@ describe('empacotamento do Windows (nsis x64)', () => {
     expect(ps.indexOf('SHA256]::Create')).toBeLessThan(ps.indexOf('ExtractToDirectory'));
     expect(ps).toContain('SHA-256 diferente');
   });
+  test('whisper-server com Vulkan: whisper.cpp no commit fixado, CPU oficial como reserva fora do CI', () => {
+    const ps = readFileSync('scripts/build-whisper-win.ps1', 'utf8');
+    expect(readFileSync('scripts/build-whisper-win.ps1').subarray(0, 3)).toEqual(Buffer.from([0xef, 0xbb, 0xbf])); // BOM: o PowerShell 5.1 lê sem BOM como ANSI
+    expect(ps).toMatch(/\$Commit = '[0-9a-f]{40}'/);
+    expect(ps).toContain('https://github.com/ggml-org/whisper.cpp.git');
+    expect(ps.indexOf('commit diferente')).toBeLessThan(ps.indexOf('cmake -S')); // confere o commit antes de compilar
+    for (const flag of ['-DGGML_BACKEND_DL=ON', '-DGGML_CPU_ALL_VARIANTS=ON', '-DGGML_NATIVE=OFF', '-DGGML_VULKAN=ON']) expect(ps, flag).toContain(flag);
+    expect(ps).toContain("'ggml-vulkan.dll'"); // o pacote sempre leva o backend Vulkan (Copy-Item falha se faltar)
+    expect(ps).toMatch(/if \(\$env:CI\) \{ throw/); // no CI não cai para a CPU em silêncio
+    expect(ps.indexOf("& (Join-Path $PSScriptRoot 'fetch-whisper-win.ps1')")).toBeGreaterThan(ps.indexOf('if (-not $env:VULKAN_SDK)'));
+    const fetch = readFileSync('scripts/fetch-whisper-win.ps1', 'utf8');
+    const version = (text: string) => text.match(/\$Version = '([^']+)'/)?.[1];
+    expect(version(ps)).toBe(version(fetch)); // GPU e reserva na mesma versão do whisper.cpp
+  });
   test('install.ps1: confere Windows x64 22H2, Node 22, CMake e C++; -Check não instala; erros em pt e en', () => {
     const ps = readFileSync('install.ps1', 'utf8');
-    for (const k of ['19045', 'PROCESSOR_ARCHITECTURE', 'nodeMajor -lt 22', 'cmake', 'vswhere', 'param([switch]$Check)', 'dist:win', 'ERRO:', 'ERROR:']) expect(ps, k).toContain(k);
+    for (const k of ['19045', 'PROCESSOR_ARCHITECTURE', 'nodeMajor -lt 22', 'cmake', 'vswhere', 'param([switch]$Check)', 'dist:win', 'ERRO:', 'ERROR:', 'VULKAN_SDK', 'KhronosGroup.VulkanSDK']) expect(ps, k).toContain(k);
     expect(ps).not.toMatch(/Start-Process[^\n]*RunAs/);
     expect(ps.indexOf('if ($Check)')).toBeLessThan(ps.indexOf('npm ci'));
     expect(ps, 'PS 5.1 tira as aspas duplas de dentro das simples').not.toMatch(/node(\.exe)? -[pe] '[^'\n]*"/);
@@ -115,5 +132,25 @@ describe('CI', () => {
     expect(ci).toContain('scripts/smoke.mjs --expect-platform win32');
     const smoke = readFileSync('scripts/smoke.mjs', 'utf8');
     for (const k of ['RICE_BENCH', '--user-data-dir', '--remote-debugging-port', '--use-mock-keychain', 'RICE_AUDIO_SIMULATE', 'RICE_DETECTOR_FAKE_MIC_STEPS']) expect(smoke, k).toContain(k);
+  });
+  test('instaladores do Windows: Vulkan SDK com versão e SHA-256 fixados, conferido antes de instalar, antes do dist:win', () => {
+    const action = readFileSync('.github/actions/vulkan-sdk/action.yml', 'utf8');
+    expect(action).toMatch(/VERSION: '\d+\.\d+\.\d+\.\d+'/);
+    expect(action).toMatch(/SHA256: '[0-9a-f]{64}'/);
+    expect(action.indexOf('Get-FileHash')).toBeLessThan(action.indexOf('Start-Process'));
+    for (const wf of [ci, readFileSync('.github/workflows/release-windows.yml', 'utf8')]) {
+      expect(wf.indexOf('uses: ./.github/actions/vulkan-sdk')).toBeGreaterThan(-1);
+      expect(wf.indexOf('uses: ./.github/actions/vulkan-sdk')).toBeLessThan(wf.indexOf('npm run dist:win'));
+    }
+  });
+  test('whisper-win: compila com Vulkan e transcreve sem GPU num job sem SDK', () => {
+    const wf = readFileSync('.github/workflows/whisper-win.yml', 'utf8');
+    expect(wf).toContain('scripts/build-whisper-win.ps1');
+    for (const k of ['MODEL_SHA256', 'WAV_SHA256']) expect(wf).toMatch(new RegExp(`${k}: [0-9a-f]{64}`));
+    const smoke = wf.slice(wf.indexOf('sem-gpu:'));
+    expect(smoke).not.toContain('vulkan-sdk'); // o teste sem GPU roda sem o SDK nem o MSVC, como num PC comum
+    expect(smoke).not.toContain('msvc-dev-cmd');
+    expect(smoke).toContain("-notmatch 'country'"); // a amostra jfk.wav precisa sair transcrita
+    expect(smoke).toContain("'no GPU found'"); // e na CPU
   });
 });

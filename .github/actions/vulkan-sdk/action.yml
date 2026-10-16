@@ -1,0 +1,26 @@
+name: Vulkan SDK
+description: >
+  Instala o Vulkan SDK da LunarG (versão e SHA-256 fixados) e exporta VULKAN_SDK, para o scripts/build-whisper-win.ps1 compilar o
+  whisper-server com GPU. Para atualizar: troque a versão e o SHA-256 (o winget mostra os dois: winget show KhronosGroup.VulkanSDK).
+runs:
+  using: composite
+  steps:
+    - name: Vulkan SDK (versão e SHA-256 fixados)
+      shell: pwsh
+      env:
+        VERSION: '1.4.363.0'
+        SHA256: '94a82d378f7a5e3e54c9db7d2fb7016af136e14ac0a18dbf0f2f67a36352d141'
+      run: |
+        $exe = Join-Path $env:RUNNER_TEMP "vulkansdk-windows-X64-$env:VERSION.exe"
+        (New-Object System.Net.WebClient).DownloadFile("https://sdk.lunarg.com/sdk/download/$env:VERSION/windows/vulkansdk-windows-X64-$env:VERSION.exe", $exe)
+        $got = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($got -ne $env:SHA256) { throw "SHA-256 do Vulkan SDK diferente do esperado: $got" }
+        $root = "C:\VulkanSDK\$env:VERSION"
+        # instalação sem interface só com os componentes padrão (headers, glslc, vulkan-1.lib), que é o que o ggml-vulkan usa
+        # espera só o instalador (o -Wait esperaria também processos filhos que ficassem vivos, e passo de action composta não tem timeout)
+        $p = Start-Process $exe -ArgumentList '--root', $root, '--accept-licenses', '--default-answer', '--confirm-command', 'install' -PassThru -NoNewWindow
+        $null = $p.Handle  # guarda o handle para o ExitCode valer depois do WaitForExit
+        $p.WaitForExit()
+        if ($p.ExitCode -ne 0) { throw "o instalador do Vulkan SDK saiu com $($p.ExitCode)" }
+        "VULKAN_SDK=$root" >> $env:GITHUB_ENV
+        "$root\Bin" >> $env:GITHUB_PATH

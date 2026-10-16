@@ -1,0 +1,77 @@
+name: whisper-win
+
+# Compila o whisper-server de Windows com Vulkan (scripts/build-whisper-win.ps1). Depois, num job à parte, sem o Vulkan SDK nem o MSVC
+# (como num PC comum sem placa de vídeo), confere que o build baixado transcreve: o backend Vulkan fica de fora e a CPU assume. O build
+# fica como artefato para quem quiser testar.
+on:
+  push:
+    branches: [main]
+    paths: ['scripts/build-whisper-win.ps1', '.github/actions/vulkan-sdk/**', '.github/workflows/whisper-win.yml']
+  pull_request:
+    paths: ['scripts/build-whisper-win.ps1', '.github/actions/vulkan-sdk/**', '.github/workflows/whisper-win.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (vulkan)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - uses: ./.github/actions/vulkan-sdk
+      - name: Compilar o whisper-server
+        run: powershell -ExecutionPolicy Bypass -File scripts/build-whisper-win.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whisper-server-win-x64-vulkan
+          path: resources/win/
+          include-hidden-files: true  # o .version diz a versão, o commit e os backends do build
+          if-no-files-found: error
+          retention-days: 14
+
+  sem-gpu:
+    name: transcreve sem GPU
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: whisper-server-win-x64-vulkan
+          path: whisper
+      - name: Transcrever a amostra jfk.wav (modelo tiny), esperando a CPU
+        shell: pwsh
+        env:
+          # modelo e amostra fixados por revisão e SHA-256; a amostra vem do mesmo commit do whisper.cpp que o script compila
+          MODEL_URL: https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.bin
+          MODEL_SHA256: be07e048e1e599ad46341c8d2a135645097a538221678b7acdd1b1919c6e1b21
+          WAV_URL: https://raw.githubusercontent.com/ggml-org/whisper.cpp/306c88f4d1286aec1bf96e544632897886af5501/samples/jfk.wav
+          WAV_SHA256: 59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e
+        run: |
+          $model = Join-Path $env:RUNNER_TEMP 'ggml-tiny.bin'
+          $wav = Join-Path $env:RUNNER_TEMP 'jfk.wav'
+          foreach ($f in @(@($env:MODEL_URL, $model, $env:MODEL_SHA256), @($env:WAV_URL, $wav, $env:WAV_SHA256))) {
+            (New-Object System.Net.WebClient).DownloadFile($f[0], $f[1])
+            if ((Get-FileHash $f[1] -Algorithm SHA256).Hash.ToLowerInvariant() -ne $f[2]) { throw "SHA-256 diferente do esperado: $($f[0])" }
+          }
+          Get-Content whisper\.version
+          $log = Join-Path $env:RUNNER_TEMP 'whisper-server.log'
+          $server = Start-Process whisper\whisper-server.exe -ArgumentList '-m', $model, '--host', '127.0.0.1', '--port', '8178', '-l', 'en' -RedirectStandardError $log -RedirectStandardOutput "$log.out" -PassThru -NoNewWindow
+          try {
+            $deadline = (Get-Date).AddSeconds(60)
+            while ((Get-Date) -lt $deadline) {
+              try { if ((Invoke-WebRequest http://127.0.0.1:8178/health -TimeoutSec 1 -UseBasicParsing).StatusCode -eq 200) { break } } catch {}
+              Start-Sleep -Milliseconds 500
+            }
+            $text = (curl.exe -sf -F "file=@$wav" -F response_format=json http://127.0.0.1:8178/inference | ConvertFrom-Json).text
+          } finally { Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue }
+          Select-String -Path $log -Pattern 'load_backend|whisper_backend_init|GPU' | ForEach-Object { $_.Line }
+          Write-Host "transcrição: $text"
+          if ($text -notmatch 'country') { throw 'o whisper-server não transcreveu a amostra' }
+          if (-not (Select-String -Path $log -Pattern 'no GPU found' -Quiet)) { throw 'esperava a transcrição na CPU (o runner não tem GPU)' }
